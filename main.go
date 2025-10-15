@@ -74,9 +74,18 @@ func generateRandintMatrix(n, m, min, max int) [][]int {
 	matrix := make([][]int, n)
 	for i := 0; i < n; i++ {
 		row := make([]int, m)
+		used := make(map[int]bool)
 		for j := 0; j < m; j++ {
+			var newRandom int
 			// rand.IntN(k) возвращает случайное число в диапазоне [0, k)
-			row[j] = rand.IntN(max-min) + min
+			for {
+				newRandom = rand.IntN(max-min+1) + min
+				if !used[newRandom] {
+					break
+				}
+			}
+			used[newRandom] = true
+			row[j] = newRandom
 		}
 		matrix[i] = row
 	}
@@ -151,7 +160,7 @@ func processing(input_fp string, number_of_attempts, sample_size int) {
 	x := stringToFloat64(columns[1])
 	y := stringToFloat64(columns[2])
 
-	randomIndexes := generateRandintMatrix(number_of_attempts, sample_size, 0, l)
+	randomIndexes := generateRandintMatrix(number_of_attempts, sample_size, 0, l-1)
 
 	correlations := make([][]string, number_of_attempts)
 
