@@ -14,30 +14,6 @@ import (
 	"github.com/pterm/pterm"
 )
 
-// spearmanCorrelation calculates the Spearman's rank correlation coefficient
-// between two slices of float64 values.
-
-// Doesn't work if data has
-// func spearmanCorrelation(x, y []float64) (float64, error) {
-// 	n := len(x)
-
-// 	// Rank the values in x and y
-// 	rankX := rankTransform(x)
-// 	rankY := rankTransform(y)
-
-// 	// Calculate the sum of the squares of the differences between ranks
-// 	sumD2 := 0.0
-// 	for i := 0; i < n; i++ {
-// 		d := rankX[i] - rankY[i]
-// 		sumD2 += d * d
-// 	}
-
-// 	// Calculate Spearman's correlation
-// 	correlation := 1 - (6.0*sumD2)/(float64(n)*(float64(n)*float64(n)-1))
-
-// 	return correlation, nil
-// }
-
 // rankTransform assigns ranks to data, handling ties by averaging.
 func rankTransform(data []float64) []float64 {
 	n := len(data)
@@ -161,6 +137,7 @@ func processing(input_fp string, number_of_attempts, sample_size int) {
 	defer file.Close()
 
 	reader := csv.NewReader(file)
+	_, _ = reader.Read()
 
 	// Читаем все данные из CSV файла
 	records, err := reader.ReadAll()
