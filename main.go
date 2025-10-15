@@ -1,9 +1,15 @@
 package main
 
 import (
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"math"
+	"math/rand/v2"
+	"os"
 	"sort"
+	"strconv"
+	"strings"
 )
 
 // spearmanCorrelation calculates the Spearman's rank correlation coefficient
@@ -64,7 +70,7 @@ func rankTransform(data []float64) []float64 {
 	return ranks
 }
 
-func pearsonCorrelation(x, y []float64) (float64, error) {
+func pearsonCorrelation(x, y []float64) float64 {
 	n := len(x)
 	sumX, sumY, sumXY, sumX2, sumY2 := 0.0, 0.0, 0.0, 0.0, 0.0
 
@@ -81,32 +87,139 @@ func pearsonCorrelation(x, y []float64) (float64, error) {
 	denominatorY := math.Sqrt(sumY2 - (sumY*sumY)/float64(n))
 
 	if denominatorX == 0 || denominatorY == 0 {
-		return 0, fmt.Errorf("standard deviation is zero")
+		return 0
 	}
 
 	correlation := numerator / (denominatorX * denominatorY)
-	return correlation, nil
+	return correlation
+}
+
+func generateRandintMatrix(n, m, min, max int) [][]int {
+	matrix := make([][]int, n)
+	for i := 0; i < n; i++ {
+		row := make([]int, m)
+		for j := 0; j < m; j++ {
+			// rand.IntN(k) возвращает случайное число в диапазоне [0, k)
+			row[j] = rand.IntN(max-min) + min
+		}
+		matrix[i] = row
+	}
+	return matrix
+}
+
+func getByIndexes[T any](originalSlice []T, indexes []int) []T {
+	newSlice := make([]T, 0, len(indexes))
+	for _, index := range indexes {
+		// Проверяем, что индекс находится в пределах исходного слайса
+		newSlice = append(newSlice, originalSlice[index])
+	}
+	return newSlice
+}
+
+// Transpose меняет строки и столбцы двумерного слайса.
+func transpose[T any](matrix [][]T) [][]T {
+	// Получаем размеры исходной матрицы
+	numRows := len(matrix)
+	numCols := len(matrix[0])
+
+	// Создаём новый слайс с изменёнными размерами (столбцы станут строками)
+	transposed := make([][]T, numCols)
+	for i := range transposed {
+		transposed[i] = make([]T, numRows)
+	}
+
+	// Копируем элементы из исходной матрицы в новую, меняя индексы
+	for i := 0; i < numRows; i++ {
+		for j := 0; j < numCols; j++ {
+			transposed[j][i] = matrix[i][j]
+		}
+	}
+
+	return transposed
+}
+
+func stringToFloat64(arr []string) []float64 {
+	result := make([]float64, len(arr))
+	for i, s := range arr {
+		f, _ := strconv.ParseFloat(s, 64)
+		result[i] = f
+	}
+	return result
+}
+
+func processing(input_fp string, number_of_attempts, sample_size int) {
+	output_fp := strings.Replace(input_fp, "/data/", "/corr/", 1)
+	output_fp = strings.Replace(output_fp, ".csv", fmt.Sprintf("_%d_%d.csv", number_of_attempts, sample_size), 1)
+
+	file, err := os.Open(input_fp)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+
+	// Читаем все данные из CSV файла
+	records, err := reader.ReadAll()
+
+	// Проверяем на наличие ошибок
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+
+	l := len(records)
+	columns := transpose(records)
+	x := stringToFloat64(columns[1])
+	y := stringToFloat64(columns[2])
+
+	randomIndexes := generateRandintMatrix(number_of_attempts, sample_size, 0, l)
+
+	correlations := make([][]string, number_of_attempts)
+
+	for i, indexes := range randomIndexes {
+		indexes_selected := getByIndexes(columns[0], indexes)
+		x_selected := getByIndexes(x, indexes)
+		y_selected := getByIndexes(y, indexes)
+
+		i_json, _ := json.Marshal(indexes_selected)
+		i_str := string(i_json)
+
+		pearson_cc := pearsonCorrelation(x_selected, y_selected)
+		spearman_cc := pearsonCorrelation(rankTransform(x_selected), rankTransform(y_selected))
+
+		correlations[i] = []string{
+			i_str,
+			fmt.Sprint(pearson_cc),
+			fmt.Sprint(spearman_cc),
+		}
+	}
+
+	// Запись в файл
+	// Создаем файл для записи
+	file_output, _ := os.Create(output_fp)
+	defer file_output.Close()
+
+	// Создаем новый CSV писатель
+	writer := csv.NewWriter(file_output)
+
+	// Записываем все данные в CSV
+	for _, record := range correlations {
+		err := writer.Write(record)
+		if err != nil {
+			fmt.Println("Error:", err)
+			return
+		}
+	}
+
+	// Записываем буфер в файл
+	writer.Flush()
 }
 
 func main() {
-	// Example usage
-	x := []float64{1, 2, 3, 4, 5}
-	y := []float64{1, 4, 4, 5, 6}
-
-	fmt.Println(rankTransform(x))
-	fmt.Println(rankTransform(y))
-
-	corr, err := pearsonCorrelation(x, y)
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
-	fmt.Printf("Pearson's correlation: %.5f\n", corr)
-
-	corr, err = pearsonCorrelation(rankTransform(x), rankTransform(y))
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
-	fmt.Printf("Pearson's correlation for rangs: %.5f\n", corr)
+	INPUT_FILE := "./data/IC50_tid50425_nM_diff15.0.csv"
+	NUMBER_OF_ATTEMPTS := 100_000
+	SAMPLE_SIZE := 30
+	processing(INPUT_FILE, NUMBER_OF_ATTEMPTS, SAMPLE_SIZE)
 }
