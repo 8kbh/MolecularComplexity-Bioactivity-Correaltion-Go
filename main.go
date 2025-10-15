@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/pterm/pterm"
 )
 
 // spearmanCorrelation calculates the Spearman's rank correlation coefficient
@@ -178,6 +180,7 @@ func processing(input_fp string, number_of_attempts, sample_size int) {
 
 	correlations := make([][]string, number_of_attempts)
 
+	p, _ := pterm.DefaultProgressbar.WithTotal(number_of_attempts).Start()
 	for i, indexes := range randomIndexes {
 		indexes_selected := getByIndexes(columns[0], indexes)
 		x_selected := getByIndexes(x, indexes)
@@ -194,6 +197,7 @@ func processing(input_fp string, number_of_attempts, sample_size int) {
 			fmt.Sprint(pearson_cc),
 			fmt.Sprint(spearman_cc),
 		}
+		p.Increment()
 	}
 
 	// Запись в файл
@@ -219,7 +223,7 @@ func processing(input_fp string, number_of_attempts, sample_size int) {
 
 func main() {
 	INPUT_FILE := "./data/IC50_tid50425_nM_diff15.0.csv"
-	NUMBER_OF_ATTEMPTS := 100_000
-	SAMPLE_SIZE := 30
+	NUMBER_OF_ATTEMPTS := 10_000
+	SAMPLE_SIZE := 50
 	processing(INPUT_FILE, NUMBER_OF_ATTEMPTS, SAMPLE_SIZE)
 }
