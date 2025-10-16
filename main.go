@@ -149,20 +149,31 @@ type ValuePair struct {
 	Value float64
 }
 
-func addToArray(array []ValuePair, item ValuePair, max_size int) []ValuePair {
+func addToArray(array []ValuePair, item ValuePair, max_size int, top_by_abs bool) []ValuePair {
 	// If the array is empty, just append the item
 	if len(array) == 0 {
 		return append(array, item)
 	}
 
 	// Calculate the absolute value of the item
-	value := math.Abs(item.Value)
+	var value float64
+	if top_by_abs {
+		value = math.Abs(item.Value)
+	} else {
+		value = item.Value
+	}
 
 	// Binary search to find the insertion index for descending order
 	left, right := 0, len(array)-1
 	for left <= right {
 		mid := (left + right) / 2
-		if math.Abs(array[mid].Value) > value {
+		var bound_val float64
+		if top_by_abs {
+			bound_val = math.Abs(array[mid].Value)
+		} else {
+			bound_val = array[mid].Value
+		}
+		if bound_val > value {
 			left = mid + 1
 		} else {
 			right = mid - 1
@@ -207,11 +218,28 @@ func convertValuePairsToStringSlice(valuePairs []ValuePair) [][]string {
 	return result
 }
 
+func saveTopCorrelationsToCSV(top_corr []ValuePair, fp_base, replace_csv string) {
+	fp := strings.Replace(fp_base, ".csv", replace_csv, 1)
+
+	file_output, err := os.Create(fp)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	defer file_output.Close()
+
+	writer := csv.NewWriter(file_output)
+	defer writer.Flush()
+
+	if err := writer.WriteAll(convertValuePairsToStringSlice(top_corr)); err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+}
+
 func processing(input_fp string, number_of_attempts, sample_size, batch_size, keep_top int) {
-	output_fp := strings.Replace(input_fp, "/data/", "/corr/", 1)
-	pearson_fp := strings.Replace(output_fp, ".csv", fmt.Sprintf("_%d_%d_pearson_top%d.csv", number_of_attempts, sample_size, keep_top), 1)
-	spearman_fp := strings.Replace(output_fp, ".csv", fmt.Sprintf("_%d_%d_spearman_top%d.csv", number_of_attempts, sample_size, keep_top), 1)
-	output_fp = strings.Replace(output_fp, ".csv", fmt.Sprintf("_%d_%d.csv", number_of_attempts, sample_size), 1)
+	output_base_fp := strings.Replace(input_fp, "/data/", "/corr/", 1)
+	output_fp := strings.Replace(output_base_fp, ".csv", fmt.Sprintf("_%d_%d.csv", number_of_attempts, sample_size), 1)
 
 	file, err := os.Open(input_fp)
 	if err != nil {
@@ -232,10 +260,17 @@ func processing(input_fp string, number_of_attempts, sample_size, batch_size, ke
 	columns := transpose(records)
 	x := stringToFloat64(columns[1])
 	y := stringToFloat64(columns[2])
-	top_pearson := []ValuePair{}
-	top_spearman := []ValuePair{}
-	lowest_top_pearson := -math.MaxFloat64
-	lowest_top_spearman := -math.MaxFloat64
+
+	top_pearson_positive := []ValuePair{}
+	top_spearman_positive := []ValuePair{}
+	lowest_top_pearson_positive := -math.MaxFloat64
+	lowest_top_spearman_positive := -math.MaxFloat64
+
+	top_pearson_negative := []ValuePair{}
+	top_spearman_negative := []ValuePair{}
+	lowest_top_pearson_negative := -math.MaxFloat64
+	lowest_top_spearman_negative := -math.MaxFloat64
+
 	// Create or truncate the output file
 	file_output, err := os.Create(output_fp)
 	if err != nil {
@@ -270,20 +305,41 @@ func processing(input_fp string, number_of_attempts, sample_size, batch_size, ke
 
 			pearson_cc := pearsonCorrelation(x_selected, y_selected)
 			spearman_cc := pearsonCorrelation(rankTransform(x_selected), rankTransform(y_selected))
-			// Update top_pearson
-			if len(top_pearson) < keep_top || math.Abs(pearson_cc) > lowest_top_pearson {
-				top_pearson = addToArray(top_pearson, ValuePair{Key: i_str, Value: pearson_cc}, keep_top)
-				if len(top_pearson) == keep_top {
-					lowest_top_pearson = math.Abs(top_pearson[len(top_pearson)-1].Value)
+
+			if pearson_cc > 0 {
+				// Update top_pearson
+				if len(top_pearson_positive) < keep_top || pearson_cc > lowest_top_pearson_positive {
+					top_pearson_positive = addToArray(top_pearson_positive, ValuePair{Key: i_str, Value: pearson_cc}, keep_top, false)
+					if len(top_pearson_positive) == keep_top {
+						lowest_top_pearson_positive = top_pearson_positive[len(top_pearson_positive)-1].Value
+					}
+				}
+			} else {
+				if len(top_pearson_negative) < keep_top || math.Abs(pearson_cc) > lowest_top_pearson_negative {
+					top_pearson_negative = addToArray(top_pearson_negative, ValuePair{Key: i_str, Value: pearson_cc}, keep_top, true)
+					if len(top_pearson_negative) == keep_top {
+						lowest_top_pearson_negative = math.Abs(top_pearson_negative[len(top_pearson_negative)-1].Value)
+					}
 				}
 			}
-			// Update top_spearman
-			if len(top_spearman) < keep_top || math.Abs(spearman_cc) > lowest_top_spearman {
-				top_spearman = addToArray(top_spearman, ValuePair{Key: i_str, Value: spearman_cc}, keep_top)
-				if len(top_spearman) == keep_top {
-					lowest_top_spearman = math.Abs(top_spearman[len(top_spearman)-1].Value)
+
+			if spearman_cc > 0 {
+				// Update top_pearson
+				if len(top_spearman_positive) < keep_top || spearman_cc > lowest_top_spearman_positive {
+					top_spearman_positive = addToArray(top_spearman_positive, ValuePair{Key: i_str, Value: spearman_cc}, keep_top, false)
+					if len(top_spearman_positive) == keep_top {
+						lowest_top_spearman_positive = top_spearman_positive[len(top_spearman_positive)-1].Value
+					}
+				}
+			} else {
+				if len(top_spearman_negative) < keep_top || math.Abs(spearman_cc) > lowest_top_spearman_negative {
+					top_spearman_negative = addToArray(top_spearman_negative, ValuePair{Key: i_str, Value: spearman_cc}, keep_top, true)
+					if len(top_spearman_negative) == keep_top {
+						lowest_top_spearman_negative = math.Abs(top_spearman_negative[len(top_spearman_negative)-1].Value)
+					}
 				}
 			}
+
 			correlations[i] = []string{
 				i_str,
 				fmt.Sprint(pearson_cc),
@@ -300,46 +356,19 @@ func processing(input_fp string, number_of_attempts, sample_size, batch_size, ke
 		fmt.Printf("Processed batch: %d to %d\n", batch_start, batch_end)
 	}
 
-	pearson_output, err := os.Create(pearson_fp)
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
-	defer file_output.Close()
-
-	writer = csv.NewWriter(pearson_output)
-	defer writer.Flush()
-
-	if err := writer.WriteAll(convertValuePairsToStringSlice(top_pearson)); err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
-
-	spearman_output, err := os.Create(spearman_fp)
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
-	defer file_output.Close()
-
-	writer = csv.NewWriter(spearman_output)
-	defer writer.Flush()
-
-	if err := writer.WriteAll(convertValuePairsToStringSlice(top_spearman)); err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
+	saveTopCorrelationsToCSV(top_pearson_positive, output_base_fp, fmt.Sprintf("_%d_%d_pearson+_top%d.csv", number_of_attempts, sample_size, keep_top))
+	saveTopCorrelationsToCSV(top_pearson_negative, output_base_fp, fmt.Sprintf("_%d_%d_pearson-_top%d.csv", number_of_attempts, sample_size, keep_top))
+	saveTopCorrelationsToCSV(top_spearman_positive, output_base_fp, fmt.Sprintf("_%d_%d_spearman+_top%d.csv", number_of_attempts, sample_size, keep_top))
+	saveTopCorrelationsToCSV(top_spearman_negative, output_base_fp, fmt.Sprintf("_%d_%d_spearman-_top%d.csv", number_of_attempts, sample_size, keep_top))
 }
 
 func main() {
 	INPUT_FILE := "./data/IC50_tid50425_nM_diff15.0.csv"
-	// NUMBER_OF_ATTEMPTS := 1_111
+	NUMBER_OF_ATTEMPTS := 1_111
 	SAMPLE_SIZE := 30
 	BATCH_SIZE := 1_000
+	KEEP_TOP := 1_000
 	// for _, i := range []int{1, 2, 4, 8, 18, 37, 78, 162, 335, 695, 1438, 2976, 6158, 12742, 26366, 54555, 112883, 233572, 483293, 1000000} {
-	i := 10_000
-	processing(INPUT_FILE, i, SAMPLE_SIZE, BATCH_SIZE, 1000)
+	processing(INPUT_FILE, NUMBER_OF_ATTEMPTS, SAMPLE_SIZE, BATCH_SIZE, KEEP_TOP)
 	// }
 }
-
-//add storing top activities
