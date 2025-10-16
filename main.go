@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // rankTransform assigns ranks to data, handling ties by averaging.
@@ -92,6 +93,18 @@ func generateRandintMatrix(n, m, min, max int) [][]int {
 	return matrix
 }
 
+// func generateRandintMatrixUnunique(n, m, min, max int) [][]int {
+// 	matrix := make([][]int, n)
+// 	for i := 0; i < n; i++ {
+// 		row := make([]int, m)
+// 		for j := 0; j < m; j++ {
+// 			row[j] = rand.IntN(max-min+1) + min
+// 		}
+// 		matrix[i] = row
+// 	}
+// 	return matrix
+// }
+
 func getByIndexes[T any](originalSlice []T, indexes []int) []T {
 	newSlice := make([]T, 0, len(indexes))
 	for _, index := range indexes {
@@ -132,7 +145,7 @@ func stringToFloat64(arr []string) []float64 {
 	return result
 }
 
-func processing(input_fp string, number_of_attempts, sample_size int) {
+func processing(input_fp string, number_of_attempts, sample_size, batch_size int) {
 	output_fp := strings.Replace(input_fp, "/data/", "/corr/", 1)
 	output_fp = strings.Replace(output_fp, ".csv", fmt.Sprintf("_%d_%d.csv", number_of_attempts, sample_size), 1)
 
@@ -145,11 +158,7 @@ func processing(input_fp string, number_of_attempts, sample_size int) {
 
 	reader := csv.NewReader(file)
 	_, _ = reader.Read()
-
-	// Читаем все данные из CSV файла
 	records, err := reader.ReadAll()
-
-	// Проверяем на наличие ошибок
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
@@ -160,52 +169,68 @@ func processing(input_fp string, number_of_attempts, sample_size int) {
 	x := stringToFloat64(columns[1])
 	y := stringToFloat64(columns[2])
 
-	randomIndexes := generateRandintMatrix(number_of_attempts, sample_size, 0, l-1)
-
-	correlations := make([][]string, number_of_attempts)
-
-	for i, indexes := range randomIndexes {
-		indexes_selected := getByIndexes(columns[0], indexes)
-		x_selected := getByIndexes(x, indexes)
-		y_selected := getByIndexes(y, indexes)
-
-		i_json, _ := json.Marshal(indexes_selected)
-		i_str := string(i_json)
-
-		pearson_cc := pearsonCorrelation(x_selected, y_selected)
-		spearman_cc := pearsonCorrelation(rankTransform(x_selected), rankTransform(y_selected))
-
-		correlations[i] = []string{
-			i_str,
-			fmt.Sprint(pearson_cc),
-			fmt.Sprint(spearman_cc),
-		}
+	// Create or truncate the output file
+	file_output, err := os.Create(output_fp)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
 	}
-
-	// Запись в файл
-	// Создаем файл для записи
-	file_output, _ := os.Create(output_fp)
 	defer file_output.Close()
 
-	// Создаем новый CSV писатель
 	writer := csv.NewWriter(file_output)
+	defer writer.Flush()
 
-	// Записываем все данные в CSV
-	for _, record := range correlations {
-		err := writer.Write(record)
-		if err != nil {
+	// Process in batches
+	for batch_start := 0; batch_start < number_of_attempts; batch_start += batch_size {
+		batch_end := batch_start + batch_size
+		if batch_end > number_of_attempts {
+			batch_end = number_of_attempts
+		}
+
+		// Generate random indexes for the current batch
+		batch_attempts := batch_end - batch_start
+		randomIndexes := generateRandintMatrix(batch_attempts, sample_size, 0, l-1)
+
+		// Process the current batch
+		correlations := make([][]string, batch_attempts)
+		for i, indexes := range randomIndexes {
+			indexes_selected := getByIndexes(columns[0], indexes)
+			x_selected := getByIndexes(x, indexes)
+			y_selected := getByIndexes(y, indexes)
+
+			i_json, _ := json.Marshal(indexes_selected)
+			i_str := string(i_json)
+
+			pearson_cc := pearsonCorrelation(x_selected, y_selected)
+			spearman_cc := pearsonCorrelation(rankTransform(x_selected), rankTransform(y_selected))
+
+			correlations[i] = []string{
+				i_str,
+				fmt.Sprint(pearson_cc),
+				fmt.Sprint(spearman_cc),
+			}
+		}
+
+		// Write the current batch to the file
+		if err := writer.WriteAll(correlations); err != nil {
 			fmt.Println("Error:", err)
 			return
 		}
-	}
 
-	// Записываем буфер в файл
-	writer.Flush()
+		fmt.Printf("Processed batch: %d to %d\n", batch_start, batch_end)
+	}
 }
 
 func main() {
-	INPUT_FILE := "./data/simple_30.csv"
-	NUMBER_OF_ATTEMPTS := 10_000
-	SAMPLE_SIZE := 5
-	processing(INPUT_FILE, NUMBER_OF_ATTEMPTS, SAMPLE_SIZE)
+	INPUT_FILE := "./data/IC50_tid50425_nM_diff15.0.csv"
+	// NUMBER_OF_ATTEMPTS := 1_111
+	SAMPLE_SIZE := 30
+	BATCH_SIZE := 1_000_000
+	for _, i := range []int{1, 2, 4, 8, 18, 37, 78, 162, 335, 695, 1438, 2976, 6158, 12742, 26366, 54555, 112883, 233572, 483293, 1000000} {
+		start := time.Now()
+		processing(INPUT_FILE, i, SAMPLE_SIZE, BATCH_SIZE)
+		fmt.Printf("%d %s\n", i, time.Since(start))
+	}
 }
+
+//add storing top activities
