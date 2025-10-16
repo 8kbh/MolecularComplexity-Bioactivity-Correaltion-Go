@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // rankTransform assigns ranks to data, handling ties by averaging.
@@ -197,8 +196,21 @@ func addToArray(array []ValuePair, item ValuePair, max_size int) []ValuePair {
 // 	return newArray
 // }
 
+func convertValuePairsToStringSlice(valuePairs []ValuePair) [][]string {
+	result := make([][]string, len(valuePairs))
+	for i, pair := range valuePairs {
+		// Convert the float64 value to a string
+		valueStr := fmt.Sprintf("%v", pair.Value)
+		// Create the inner slice [key, str(value)]
+		result[i] = []string{pair.Key, valueStr}
+	}
+	return result
+}
+
 func processing(input_fp string, number_of_attempts, sample_size, batch_size, keep_top int) {
 	output_fp := strings.Replace(input_fp, "/data/", "/corr/", 1)
+	pearson_fp := strings.Replace(output_fp, ".csv", fmt.Sprintf("_%d_%d_pearson_top%d.csv", number_of_attempts, sample_size, keep_top), 1)
+	spearman_fp := strings.Replace(output_fp, ".csv", fmt.Sprintf("_%d_%d_spearman_top%d.csv", number_of_attempts, sample_size, keep_top), 1)
 	output_fp = strings.Replace(output_fp, ".csv", fmt.Sprintf("_%d_%d.csv", number_of_attempts, sample_size), 1)
 
 	file, err := os.Open(input_fp)
@@ -287,29 +299,46 @@ func processing(input_fp string, number_of_attempts, sample_size, batch_size, ke
 
 		fmt.Printf("Processed batch: %d to %d\n", batch_start, batch_end)
 	}
-	// for _, item := range top_pearson {
-	// 	fmt.Println(item[1])
-	// }
-	// fmt.Println()
-	// for _, item := range top_spearman {
-	// 	fmt.Println(item[1])
-	// }
+
+	pearson_output, err := os.Create(pearson_fp)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	defer file_output.Close()
+
+	writer = csv.NewWriter(pearson_output)
+	defer writer.Flush()
+
+	if err := writer.WriteAll(convertValuePairsToStringSlice(top_pearson)); err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+
+	spearman_output, err := os.Create(spearman_fp)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	defer file_output.Close()
+
+	writer = csv.NewWriter(spearman_output)
+	defer writer.Flush()
+
+	if err := writer.WriteAll(convertValuePairsToStringSlice(top_spearman)); err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
 }
 
 func main() {
 	INPUT_FILE := "./data/IC50_tid50425_nM_diff15.0.csv"
 	// NUMBER_OF_ATTEMPTS := 1_111
 	SAMPLE_SIZE := 30
-	BATCH_SIZE := 1_000_000
+	BATCH_SIZE := 1_000
 	// for _, i := range []int{1, 2, 4, 8, 18, 37, 78, 162, 335, 695, 1438, 2976, 6158, 12742, 26366, 54555, 112883, 233572, 483293, 1000000} {
-	i := 100_000
-	total := 0.0
-	for range 50 {
-		start := time.Now()
-		processing(INPUT_FILE, i, SAMPLE_SIZE, BATCH_SIZE, 1000)
-		total += float64(time.Since(start))
-	}
-	fmt.Printf("%d %s\n", i, total/50)
+	i := 10_000
+	processing(INPUT_FILE, i, SAMPLE_SIZE, BATCH_SIZE, 1000)
 	// }
 }
 
