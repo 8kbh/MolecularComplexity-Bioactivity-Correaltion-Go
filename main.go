@@ -145,36 +145,57 @@ func stringToFloat64(arr []string) []float64 {
 	return result
 }
 
-func addToArray(array [][]any, item []any, max_size int) [][]any {
-	// Handle empty array
+type ValuePair struct {
+	Key   string
+	Value float64
+}
+
+func addToArray(array []ValuePair, item ValuePair, max_size int) []ValuePair {
+	// If the array is empty, just append the item
 	if len(array) == 0 {
 		return append(array, item)
 	}
 
-	// Binary search to find the insertion index
-	left, right := 0, len(array)-1
-	value := math.Abs(item[1].(float64))
+	// Calculate the absolute value of the item
+	value := math.Abs(item.Value)
 
+	// Binary search to find the insertion index for descending order
+	left, right := 0, len(array)-1
 	for left <= right {
 		mid := (left + right) / 2
-		if math.Abs(array[mid][1].(float64)) < value {
+		if math.Abs(array[mid].Value) > value {
 			left = mid + 1
 		} else {
 			right = mid - 1
 		}
 	}
 
-	// Insert the item at the correct position
-	newArray := make([][]any, len(array)+1)
-	copy(newArray, array[:left])
-	newArray[left] = item
-	copy(newArray[left+1:], array[left:])
+	// Build the new array using append and slice concatenation
+	newArray := append(array[:left], item)
+	newArray = append(newArray, array[left:]...)
 
+	// Truncate to max_size if necessary
 	if len(newArray) > max_size {
-		return newArray[:max_size]
+		newArray = newArray[:max_size]
 	}
+
 	return newArray
 }
+
+// a bit slower
+// func addToArray(array []ValuePair, item ValuePair, max_size int) []ValuePair {
+// 	// Insert the item in the correct position
+// 	newArray := append(array, item)
+// 	// Sort by absolute value in descending order
+// 	sort.Slice(newArray, func(i, j int) bool {
+// 		return math.Abs(newArray[i].Value) > math.Abs(newArray[j].Value)
+// 	})
+// 	// Truncate to max_size if necessary
+// 	if len(newArray) > max_size {
+// 		newArray = newArray[:max_size]
+// 	}
+// 	return newArray
+// }
 
 func processing(input_fp string, number_of_attempts, sample_size, batch_size, keep_top int) {
 	output_fp := strings.Replace(input_fp, "/data/", "/corr/", 1)
@@ -199,12 +220,10 @@ func processing(input_fp string, number_of_attempts, sample_size, batch_size, ke
 	columns := transpose(records)
 	x := stringToFloat64(columns[1])
 	y := stringToFloat64(columns[2])
-
-	top_pearson := make([][]any, keep_top)
-	top_spearman := make([][]any, keep_top)
-	lowest_top_pearson := 0.
-	lowest_top_spearman := 0.
-
+	top_pearson := []ValuePair{}
+	top_spearman := []ValuePair{}
+	lowest_top_pearson := -math.MaxFloat64
+	lowest_top_spearman := -math.MaxFloat64
 	// Create or truncate the output file
 	file_output, err := os.Create(output_fp)
 	if err != nil {
@@ -239,14 +258,19 @@ func processing(input_fp string, number_of_attempts, sample_size, batch_size, ke
 
 			pearson_cc := pearsonCorrelation(x_selected, y_selected)
 			spearman_cc := pearsonCorrelation(rankTransform(x_selected), rankTransform(y_selected))
-
-			if lowest_top_pearson > pearson_cc {
-				top_pearson = addToArray(top_pearson, []any{i_str, pearson_cc}, keep_top)
-				lowest_top_pearson = top_pearson[len(top_pearson)-1][1].(float64)
+			// Update top_pearson
+			if len(top_pearson) < keep_top || math.Abs(pearson_cc) > lowest_top_pearson {
+				top_pearson = addToArray(top_pearson, ValuePair{Key: i_str, Value: pearson_cc}, keep_top)
+				if len(top_pearson) == keep_top {
+					lowest_top_pearson = math.Abs(top_pearson[len(top_pearson)-1].Value)
+				}
 			}
-			if lowest_top_spearman > spearman_cc {
-				top_spearman = addToArray(top_spearman, []any{i_str, spearman_cc}, keep_top)
-				lowest_top_spearman = top_pearson[len(top_spearman)-1][1].(float64)
+			// Update top_spearman
+			if len(top_spearman) < keep_top || math.Abs(spearman_cc) > lowest_top_spearman {
+				top_spearman = addToArray(top_spearman, ValuePair{Key: i_str, Value: spearman_cc}, keep_top)
+				if len(top_spearman) == keep_top {
+					lowest_top_spearman = math.Abs(top_spearman[len(top_spearman)-1].Value)
+				}
 			}
 			correlations[i] = []string{
 				i_str,
@@ -263,6 +287,13 @@ func processing(input_fp string, number_of_attempts, sample_size, batch_size, ke
 
 		fmt.Printf("Processed batch: %d to %d\n", batch_start, batch_end)
 	}
+	// for _, item := range top_pearson {
+	// 	fmt.Println(item[1])
+	// }
+	// fmt.Println()
+	// for _, item := range top_spearman {
+	// 	fmt.Println(item[1])
+	// }
 }
 
 func main() {
@@ -270,11 +301,16 @@ func main() {
 	// NUMBER_OF_ATTEMPTS := 1_111
 	SAMPLE_SIZE := 30
 	BATCH_SIZE := 1_000_000
-	for _, i := range []int{1, 2, 4, 8, 18, 37, 78, 162, 335, 695, 1438, 2976, 6158, 12742, 26366, 54555, 112883, 233572, 483293, 1000000} {
+	// for _, i := range []int{1, 2, 4, 8, 18, 37, 78, 162, 335, 695, 1438, 2976, 6158, 12742, 26366, 54555, 112883, 233572, 483293, 1000000} {
+	i := 100_000
+	total := 0.0
+	for range 50 {
 		start := time.Now()
-		processing(INPUT_FILE, i, SAMPLE_SIZE, BATCH_SIZE, 10)
-		fmt.Printf("%d %s\n", i, time.Since(start))
+		processing(INPUT_FILE, i, SAMPLE_SIZE, BATCH_SIZE, 1000)
+		total += float64(time.Since(start))
 	}
+	fmt.Printf("%d %s\n", i, total/50)
+	// }
 }
 
 //add storing top activities
