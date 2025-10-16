@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/csv"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -240,8 +241,8 @@ func saveTopCorrelationsToCSV(top_corr []ValuePair, fp_base, replace_csv string)
 }
 
 func processing(input_fp string, number_of_attempts, sample_size, batch_size, keep_top int, store_all bool) {
-	output_base_fp := strings.Replace(input_fp, "/data/", "/corr/", 1)
-	output_fp := strings.Replace(output_base_fp, ".csv", fmt.Sprintf("_%d_%d.csv", number_of_attempts, sample_size), 1)
+	output_base_fp := input_fp
+	output_fp := strings.Replace(output_base_fp, ".csv", fmt.Sprintf("_corr_%d_%d.csv", number_of_attempts, sample_size), 1)
 
 	file, err := os.Open(input_fp)
 	if err != nil {
@@ -364,20 +365,54 @@ func processing(input_fp string, number_of_attempts, sample_size, batch_size, ke
 		}
 	}
 
-	saveTopCorrelationsToCSV(top_pearson_positive, output_base_fp, fmt.Sprintf("_%d_%d_pearson+_top%d.csv", number_of_attempts, sample_size, keep_top))
-	saveTopCorrelationsToCSV(top_pearson_negative, output_base_fp, fmt.Sprintf("_%d_%d_pearson-_top%d.csv", number_of_attempts, sample_size, keep_top))
-	saveTopCorrelationsToCSV(top_spearman_positive, output_base_fp, fmt.Sprintf("_%d_%d_spearman+_top%d.csv", number_of_attempts, sample_size, keep_top))
-	saveTopCorrelationsToCSV(top_spearman_negative, output_base_fp, fmt.Sprintf("_%d_%d_spearman-_top%d.csv", number_of_attempts, sample_size, keep_top))
+	saveTopCorrelationsToCSV(top_pearson_positive, output_base_fp, fmt.Sprintf("_corr_%d_%d_pearson+_top%d.csv", number_of_attempts, sample_size, keep_top))
+	saveTopCorrelationsToCSV(top_pearson_negative, output_base_fp, fmt.Sprintf("_corr_%d_%d_pearson-_top%d.csv", number_of_attempts, sample_size, keep_top))
+	saveTopCorrelationsToCSV(top_spearman_positive, output_base_fp, fmt.Sprintf("_corr_%d_%d_spearman+_top%d.csv", number_of_attempts, sample_size, keep_top))
+	saveTopCorrelationsToCSV(top_spearman_negative, output_base_fp, fmt.Sprintf("_corr_%d_%d_spearman-_top%d.csv", number_of_attempts, sample_size, keep_top))
 }
 
 func main() {
-	INPUT_FILE := "./data/IC50_tid50425_nM_diff15.0.csv"
-	NUMBER_OF_ATTEMPTS := 1_111
-	SAMPLE_SIZE := 30
-	BATCH_SIZE := 1_000
-	KEEP_TOP := 100
-	STORE_ALL := true
+	INPUT_FILE := flag.String("input", "", "path to input file")
+	NUMBER_OF_ATTEMPTS := flag.Int("number_of_attempts", 0, "number of attempts")
+	SAMPLE_SIZE := flag.Int("sample_size", 0, "sample size")
+	BATCH_SIZE := flag.Int("batch_size", 100_000, "batch size")
+	KEEP_TOP := flag.Int("keep_top", 1000, "how many samples with highest correlation store")
+	STORE_ALL := flag.Bool("store_all", false, "store all correlation results in separate file")
+
+	help := flag.Bool("h", false, "Show help message")
+
+	flag.Parse()
+
+	if *help {
+		pterm.DefaultHeader.
+			WithBackgroundStyle(pterm.NewStyle(pterm.BgLightBlue)).
+			Println("Correlation Coefficient Calculator")
+		fmt.Println("This program calculates the Pearson and Spearman correlation coefficients " +
+			"between two sets of values in a CSV file.\n" +
+			"It performs N calculations (-number_of_attempts) of both coefficients " +
+			"using random subsets of size M (-sample_size).\n" +
+			"The input CSV file must have the first column as an ID/index, " +
+			"and the second and third columns as the values for which you want to find correlations.")
+
+		fmt.Println("\nUsage: corr_csv [OPTIONS]")
+		fmt.Println("Options:")
+		flag.PrintDefaults()
+		os.Exit(0)
+	}
+
+	if *INPUT_FILE == "" {
+		fmt.Println("-input argument is required")
+		os.Exit(2)
+	}
+	if *NUMBER_OF_ATTEMPTS == 0 {
+		fmt.Println("-number_of_attempts argument is required")
+		os.Exit(2)
+	}
+	if *SAMPLE_SIZE == 0 {
+		fmt.Println("-sample_size argument is required")
+		os.Exit(2)
+	}
 	// for _, i := range []int{1, 2, 4, 8, 18, 37, 78, 162, 335, 695, 1438, 2976, 6158, 12742, 26366, 54555, 112883, 233572, 483293, 1000000} {
-	processing(INPUT_FILE, NUMBER_OF_ATTEMPTS, SAMPLE_SIZE, BATCH_SIZE, KEEP_TOP, STORE_ALL)
+	processing(*INPUT_FILE, *NUMBER_OF_ATTEMPTS, *SAMPLE_SIZE, *BATCH_SIZE, *KEEP_TOP, *STORE_ALL)
 	// }
 }
