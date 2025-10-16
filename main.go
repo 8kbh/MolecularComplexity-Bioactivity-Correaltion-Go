@@ -145,7 +145,38 @@ func stringToFloat64(arr []string) []float64 {
 	return result
 }
 
-func processing(input_fp string, number_of_attempts, sample_size, batch_size int) {
+func addToArray(array [][]any, item []any, max_size int) [][]any {
+	// Handle empty array
+	if len(array) == 0 {
+		return append(array, item)
+	}
+
+	// Binary search to find the insertion index
+	left, right := 0, len(array)-1
+	value := math.Abs(item[1].(float64))
+
+	for left <= right {
+		mid := (left + right) / 2
+		if math.Abs(array[mid][1].(float64)) < value {
+			left = mid + 1
+		} else {
+			right = mid - 1
+		}
+	}
+
+	// Insert the item at the correct position
+	newArray := make([][]any, len(array)+1)
+	copy(newArray, array[:left])
+	newArray[left] = item
+	copy(newArray[left+1:], array[left:])
+
+	if len(newArray) > max_size {
+		return newArray[:max_size]
+	}
+	return newArray
+}
+
+func processing(input_fp string, number_of_attempts, sample_size, batch_size, keep_top int) {
 	output_fp := strings.Replace(input_fp, "/data/", "/corr/", 1)
 	output_fp = strings.Replace(output_fp, ".csv", fmt.Sprintf("_%d_%d.csv", number_of_attempts, sample_size), 1)
 
@@ -168,6 +199,11 @@ func processing(input_fp string, number_of_attempts, sample_size, batch_size int
 	columns := transpose(records)
 	x := stringToFloat64(columns[1])
 	y := stringToFloat64(columns[2])
+
+	top_pearson := make([][]any, keep_top)
+	top_spearman := make([][]any, keep_top)
+	lowest_top_pearson := 0.
+	lowest_top_spearman := 0.
 
 	// Create or truncate the output file
 	file_output, err := os.Create(output_fp)
@@ -204,6 +240,14 @@ func processing(input_fp string, number_of_attempts, sample_size, batch_size int
 			pearson_cc := pearsonCorrelation(x_selected, y_selected)
 			spearman_cc := pearsonCorrelation(rankTransform(x_selected), rankTransform(y_selected))
 
+			if lowest_top_pearson > pearson_cc {
+				top_pearson = addToArray(top_pearson, []any{i_str, pearson_cc}, keep_top)
+				lowest_top_pearson = top_pearson[len(top_pearson)-1][1].(float64)
+			}
+			if lowest_top_spearman > spearman_cc {
+				top_spearman = addToArray(top_spearman, []any{i_str, spearman_cc}, keep_top)
+				lowest_top_spearman = top_pearson[len(top_spearman)-1][1].(float64)
+			}
 			correlations[i] = []string{
 				i_str,
 				fmt.Sprint(pearson_cc),
@@ -228,7 +272,7 @@ func main() {
 	BATCH_SIZE := 1_000_000
 	for _, i := range []int{1, 2, 4, 8, 18, 37, 78, 162, 335, 695, 1438, 2976, 6158, 12742, 26366, 54555, 112883, 233572, 483293, 1000000} {
 		start := time.Now()
-		processing(INPUT_FILE, i, SAMPLE_SIZE, BATCH_SIZE)
+		processing(INPUT_FILE, i, SAMPLE_SIZE, BATCH_SIZE, 10)
 		fmt.Printf("%d %s\n", i, time.Since(start))
 	}
 }
