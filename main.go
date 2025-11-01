@@ -128,7 +128,7 @@ func main() {
 			return
 		}
 		defer file.Close()
-		input_fp := "temp_" + utils.GenerateRandomString(5) + ".csv"
+		input_fp := "temp/" + utils.GenerateRandomString(5) + ".csv"
 		out, err := os.Create(input_fp)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
