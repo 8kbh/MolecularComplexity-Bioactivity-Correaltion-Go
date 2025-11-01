@@ -3,16 +3,17 @@ package main
 import (
 	"encoding/csv"
 	"encoding/json"
-	"flag"
 	"fmt"
+	"io"
 	"math"
 	"math/rand/v2"
+	"net/http"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/pterm/pterm"
+	"github.com/gin-gonic/gin"
 )
 
 // rankTransform assigns ranks to data, handling ties by averaging.
@@ -240,17 +241,14 @@ func saveTopCorrelationsToCSV(top_corr []ValuePair, fp_base, replace_csv string)
 	}
 }
 
-func processing(input_fp string, number_of_attempts, sample_size, batch_size, keep_top int, store_all bool) {
+func processingSSE(input_fp string, number_of_attempts, sample_size, batch_size, keep_top int, store_all bool, progressChan chan<- int) {
 	output_base_fp := input_fp
-	output_fp := strings.Replace(output_base_fp, ".csv", fmt.Sprintf("_corr_%d_%d.csv", number_of_attempts, sample_size), 1)
-
 	file, err := os.Open(input_fp)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
 	}
 	defer file.Close()
-
 	reader := csv.NewReader(file)
 	_, _ = reader.Read()
 	records, err := reader.ReadAll()
@@ -258,25 +256,21 @@ func processing(input_fp string, number_of_attempts, sample_size, batch_size, ke
 		fmt.Println("Error:", err)
 		return
 	}
-
 	l := len(records)
 	columns := transpose(records)
 	x := stringToFloat64(columns[1])
 	y := stringToFloat64(columns[2])
-
 	top_pearson_positive := []ValuePair{}
 	top_spearman_positive := []ValuePair{}
 	lowest_top_pearson_positive := -math.MaxFloat64
 	lowest_top_spearman_positive := -math.MaxFloat64
-
 	top_pearson_negative := []ValuePair{}
 	top_spearman_negative := []ValuePair{}
 	lowest_top_pearson_negative := -math.MaxFloat64
 	lowest_top_spearman_negative := -math.MaxFloat64
-
-	// Create or truncate the output file
 	var writer *csv.Writer
 	if store_all {
+		output_fp := strings.Replace(output_base_fp, ".csv", fmt.Sprintf("_corr_%d_%d.csv", number_of_attempts, sample_size), 1)
 		file_output, err := os.Create(output_fp)
 		if err != nil {
 			fmt.Println("Error:", err)
@@ -286,133 +280,114 @@ func processing(input_fp string, number_of_attempts, sample_size, batch_size, ke
 		writer = csv.NewWriter(file_output)
 		defer writer.Flush()
 	}
-
-	p, _ := pterm.DefaultProgressbar.WithTotal(number_of_attempts).Start()
-	// Process in batches
 	for batch_start := 0; batch_start < number_of_attempts; batch_start += batch_size {
 		batch_end := batch_start + batch_size
 		if batch_end > number_of_attempts {
 			batch_end = number_of_attempts
 		}
-
-		// Generate random indexes for the current batch
 		batch_attempts := batch_end - batch_start
 		randomIndexes := generateRandintMatrix(batch_attempts, sample_size, 0, l-1)
-
-		// Process the current batch
 		correlations := make([][]string, batch_attempts)
 		for i, indexes := range randomIndexes {
 			indexes_selected := getByIndexes(columns[0], indexes)
 			x_selected := getByIndexes(x, indexes)
 			y_selected := getByIndexes(y, indexes)
-
 			i_json, _ := json.Marshal(indexes_selected)
 			i_str := string(i_json)
-
 			pearson_cc := pearsonCorrelation(x_selected, y_selected)
 			spearman_cc := pearsonCorrelation(rankTransform(x_selected), rankTransform(y_selected))
-
 			if pearson_cc > 0 {
-				// Update top_pearson
 				if len(top_pearson_positive) < keep_top || pearson_cc > lowest_top_pearson_positive {
 					top_pearson_positive = addToArray(top_pearson_positive, ValuePair{Key: i_str, Value: pearson_cc}, keep_top, false)
 					if len(top_pearson_positive) == keep_top {
 						lowest_top_pearson_positive = top_pearson_positive[len(top_pearson_positive)-1].Value
 					}
+				} else {
+					if len(top_pearson_negative) < keep_top || math.Abs(pearson_cc) > lowest_top_pearson_negative {
+						top_pearson_negative = addToArray(top_pearson_negative, ValuePair{Key: i_str, Value: pearson_cc}, keep_top, true)
+						if len(top_pearson_negative) == keep_top {
+							lowest_top_pearson_negative = math.Abs(top_pearson_negative[len(top_pearson_negative)-1].Value)
+						}
+					}
 				}
-			} else {
-				if len(top_pearson_negative) < keep_top || math.Abs(pearson_cc) > lowest_top_pearson_negative {
-					top_pearson_negative = addToArray(top_pearson_negative, ValuePair{Key: i_str, Value: pearson_cc}, keep_top, true)
-					if len(top_pearson_negative) == keep_top {
-						lowest_top_pearson_negative = math.Abs(top_pearson_negative[len(top_pearson_negative)-1].Value)
+				if spearman_cc > 0 {
+					if len(top_spearman_positive) < keep_top || spearman_cc > lowest_top_spearman_positive {
+						top_spearman_positive = addToArray(top_spearman_positive, ValuePair{Key: i_str, Value: spearman_cc}, keep_top, false)
+						if len(top_spearman_positive) == keep_top {
+							lowest_top_spearman_positive = top_spearman_positive[len(top_spearman_positive)-1].Value
+						}
+					} else {
+						if len(top_spearman_negative) < keep_top || math.Abs(spearman_cc) > lowest_top_spearman_negative {
+							top_spearman_negative = addToArray(top_spearman_negative, ValuePair{Key: i_str, Value: spearman_cc}, keep_top, true)
+							if len(top_spearman_negative) == keep_top {
+								lowest_top_spearman_negative = math.Abs(top_spearman_negative[len(top_spearman_negative)-1].Value)
+							}
+						}
+					}
+				}
+				if store_all {
+					correlations[i] = []string{
+						i_str,
+						fmt.Sprint(pearson_cc),
+						fmt.Sprint(spearman_cc),
 					}
 				}
 			}
-
-			if spearman_cc > 0 {
-				// Update top_pearson
-				if len(top_spearman_positive) < keep_top || spearman_cc > lowest_top_spearman_positive {
-					top_spearman_positive = addToArray(top_spearman_positive, ValuePair{Key: i_str, Value: spearman_cc}, keep_top, false)
-					if len(top_spearman_positive) == keep_top {
-						lowest_top_spearman_positive = top_spearman_positive[len(top_spearman_positive)-1].Value
-					}
-				}
-			} else {
-				if len(top_spearman_negative) < keep_top || math.Abs(spearman_cc) > lowest_top_spearman_negative {
-					top_spearman_negative = addToArray(top_spearman_negative, ValuePair{Key: i_str, Value: spearman_cc}, keep_top, true)
-					if len(top_spearman_negative) == keep_top {
-						lowest_top_spearman_negative = math.Abs(top_spearman_negative[len(top_spearman_negative)-1].Value)
-					}
-				}
-			}
-
-			if store_all {
-				correlations[i] = []string{
-					i_str,
-					fmt.Sprint(pearson_cc),
-					fmt.Sprint(spearman_cc),
-				}
-			}
-			p.Increment()
+			progressChan <- batch_start + i + 1
 		}
-
 		if store_all {
-			// Write the current batch to the file
 			if err := writer.WriteAll(correlations); err != nil {
 				fmt.Println("Error:", err)
 				return
 			}
 		}
 	}
-
+	close(progressChan)
 	saveTopCorrelationsToCSV(top_pearson_positive, output_base_fp, fmt.Sprintf("_corr_%d_%d_pearson+_top%d.csv", number_of_attempts, sample_size, keep_top))
 	saveTopCorrelationsToCSV(top_pearson_negative, output_base_fp, fmt.Sprintf("_corr_%d_%d_pearson-_top%d.csv", number_of_attempts, sample_size, keep_top))
 	saveTopCorrelationsToCSV(top_spearman_positive, output_base_fp, fmt.Sprintf("_corr_%d_%d_spearman+_top%d.csv", number_of_attempts, sample_size, keep_top))
 	saveTopCorrelationsToCSV(top_spearman_negative, output_base_fp, fmt.Sprintf("_corr_%d_%d_spearman-_top%d.csv", number_of_attempts, sample_size, keep_top))
 }
 
+func runProcessing(input_fp string, number_of_attempts, sample_size, batch_size, keep_top int, store_all bool, w http.ResponseWriter) {
+	progressChan := make(chan int)
+	go processingSSE(input_fp, number_of_attempts, sample_size, batch_size, keep_top, store_all, progressChan)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	for progress := range progressChan {
+		fmt.Fprintf(w, "data: %d\n\n", progress)
+		w.(http.Flusher).Flush()
+	}
+}
+
 func main() {
-	INPUT_FILE := flag.String("input", "", "path to input file")
-	NUMBER_OF_ATTEMPTS := flag.Int("number_of_attempts", 0, "number of attempts")
-	SAMPLE_SIZE := flag.Int("sample_size", 0, "sample size")
-	BATCH_SIZE := flag.Int("batch_size", 100_000, "batch size")
-	KEEP_TOP := flag.Int("keep_top", 1000, "how many samples with highest correlation store")
-	STORE_ALL := flag.Bool("store_all", false, "store all correlation results in separate file")
-
-	help := flag.Bool("h", false, "Show help message")
-
-	flag.Parse()
-
-	if *help {
-		pterm.DefaultHeader.
-			WithBackgroundStyle(pterm.NewStyle(pterm.BgLightBlue)).
-			Println("Correlation Coefficient Calculator")
-		fmt.Println("This program calculates the Pearson and Spearman correlation coefficients " +
-			"between two sets of values in a CSV file.\n" +
-			"It performs N calculations (-number_of_attempts) of both coefficients " +
-			"using random subsets of size M (-sample_size).\n" +
-			"The input CSV file must have the first column as an ID/index, " +
-			"and the second and third columns as the values for which you want to find correlations.")
-
-		fmt.Println("\nUsage: corr_csv [OPTIONS]")
-		fmt.Println("Options:")
-		flag.PrintDefaults()
-		os.Exit(0)
-	}
-
-	if *INPUT_FILE == "" {
-		fmt.Println("-input argument is required")
-		os.Exit(2)
-	}
-	if *NUMBER_OF_ATTEMPTS == 0 {
-		fmt.Println("-number_of_attempts argument is required")
-		os.Exit(2)
-	}
-	if *SAMPLE_SIZE == 0 {
-		fmt.Println("-sample_size argument is required")
-		os.Exit(2)
-	}
-	// for _, i := range []int{1, 2, 4, 8, 18, 37, 78, 162, 335, 695, 1438, 2976, 6158, 12742, 26366, 54555, 112883, 233572, 483293, 1000000} {
-	processing(*INPUT_FILE, *NUMBER_OF_ATTEMPTS, *SAMPLE_SIZE, *BATCH_SIZE, *KEEP_TOP, *STORE_ALL)
-	// }
+	r := gin.Default()
+	r.POST("/upload", func(c *gin.Context) {
+		file, header, err := c.Request.FormFile("file")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		defer file.Close()
+		input_fp := "temp_" + header.Filename
+		out, err := os.Create(input_fp)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		defer out.Close()
+		_, err = io.Copy(out, file)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		number_of_attempts, _ := strconv.Atoi(c.PostForm("number_of_attempts"))
+		sample_size, _ := strconv.Atoi(c.PostForm("sample_size"))
+		batch_size, _ := strconv.Atoi(c.PostForm("batch_size"))
+		keep_top, _ := strconv.Atoi(c.PostForm("keep_top"))
+		store_all, _ := strconv.ParseBool(c.PostForm("store_all"))
+		runProcessing(input_fp, number_of_attempts, sample_size, batch_size, keep_top, store_all, c.Writer)
+	})
+	r.Run(":8080")
 }
