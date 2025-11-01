@@ -1,4 +1,4 @@
-module MC-BA-corr
+module corr_finder
 
 go 1.25.3
 
